@@ -1,0 +1,4 @@
+whisper
+pyttsx3
+sounddevice
+scipy
