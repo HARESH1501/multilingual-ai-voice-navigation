@@ -1,15 +1,4 @@
 # app.py
-# NOTE: Make sure your requirements.txt contains:
-# streamlit
-# faster-whisper
-# gtts
-# googletrans==4.0.0-rc1
-# deep-translator
-# langdetect
-# scipy
-# numpy
-# streamlit-webrtc
-
 import streamlit as st
 from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
@@ -20,18 +9,12 @@ import numpy as np
 import base64
 import streamlit.components.v1 as components
 from scipy.io.wavfile import write
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
 
 # ----------------------------
 # Configuration
 # ----------------------------
 FS = 44100
-DURATION = 5  # seconds to record (kept for reference)
 AUDIO_FILE = "input.wav"
-RECORDINGS_DIR = "recordings"
-
-# ensure recordings dir exists
-os.makedirs(RECORDINGS_DIR, exist_ok=True)
 
 st.set_page_config(page_title="KPRIET Campus Voice Assistant", page_icon="🎓", layout="centered")
 
@@ -161,7 +144,7 @@ location_map = {
     }
 }
 
-# flatten synonyms -> key mapping
+# flatten synonyms
 synonym_to_key = {syn.lower(): key for key, val in location_map.items() for syn in val["synonyms"]}
 
 # ----------------------------
@@ -176,6 +159,7 @@ def fuzzy_location_match(user_text):
             return synonym_to_key[matches[0]]
     return None
 
+
 def find_location_response(transcribed_text):
     if not transcribed_text:
         return "Sorry, I don't have information about that location yet."
@@ -189,247 +173,183 @@ def find_location_response(transcribed_text):
     return "Sorry, I don't have information about that location yet."
 
 # ----------------------------
-# Whisper model load (fixed)
+# Whisper load
 # ----------------------------
 @st.cache_resource
 def load_whisper():
     return WhisperModel("base", device="cpu")
 
 # ----------------------------
-# Translation helper
+# Translation
 # ----------------------------
 def translate_text(text, lang_code):
     try:
         translator = GoogleTranslator(source="auto", target=lang_code)
         return translator.translate(text)
-    except Exception:
+    except:
         return "Translation unavailable."
 
 # ----------------------------
-# TTS: generate mp3 bytes with gTTS then return base64 string
+# TTS
 # ----------------------------
 def tts_to_b64(text, lang):
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             fname = tmp.name
         gTTS(text=text, lang=lang).save(fname)
-        with open(fname, "rb") as f:
-            b = f.read()
-        b64 = base64.b64encode(b).decode("utf-8")
-        try:
-            os.remove(fname)
-        except:
-            pass
-        return b64
-    except Exception:
+        b = open(fname, "rb").read()
+        os.remove(fname)
+        return base64.b64encode(b).decode()
+    except:
         return None
 
 # ----------------------------
-# Play three audios sequentially in browser using data URIs
+# Play TTS sequentially
 # ----------------------------
 def play_three_in_browser(b64_en, b64_ta, b64_hi):
     html = f"""
-    <div id="players" style="display:none">
+    <div id="p" style="display:none">
       <audio id="a1" src="data:audio/mp3;base64,{b64_en}"></audio>
       <audio id="a2" src="data:audio/mp3;base64,{b64_ta}"></audio>
       <audio id="a3" src="data:audio/mp3;base64,{b64_hi}"></audio>
     </div>
     <script>
-      const a1 = document.getElementById("a1");
-      const a2 = document.getElementById("a2");
-      const a3 = document.getElementById("a3");
-      function playIfReady(a) {{
-        if (!a) return Promise.resolve();
-        return new Promise((res) => {{
-          a.onended = () => res();
-          a.onerror = () => res();
-          a.play().catch(()=>{{}});
-        }});
-      }}
-      (async () => {{
-        await playIfReady(a1);
-        await playIfReady(a2);
-        await playIfReady(a3);
-      }})();
+      a1.onended = ()=>a2.play();
+      a2.onended = ()=>a3.play();
+      a1.play();
     </script>
     """
-    components.html(html, height=10)
+    components.html(html, height=0)
 
 # ----------------------------
-# Streamlit UI
+# HTML + JS Audio Recorder
+# ----------------------------
+def audio_recorder_ui():
+    html_code = """
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        async function startRecording() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+
+            audioChunks = [];
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(audioChunks, { type: 'audio/wav' });
+                const arrayBuffer = await blob.arrayBuffer();
+                
+                let binary = '';
+                const bytes = new Uint8Array(arrayBuffer);
+                bytes.forEach(b => binary += String.fromCharCode(b));
+                const base64Audio = btoa(binary);
+
+                const out = document.getElementById("audio_data");
+                out.value = base64Audio;
+                out.dispatchEvent(new Event("change"));
+            };
+
+            mediaRecorder.start();
+        }
+
+        function stopRecording() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+        }
+    </script>
+
+    <button onclick="startRecording()" style="padding:10px 20px; background:red; color:white; border:none; border-radius:5px;">
+        ⏺ Start Recording
+    </button>
+
+    <button onclick="stopRecording()" style="padding:10px 20px; background:gray; color:white; border:none; border-radius:5px; margin-left:10px;">
+        ⏹ Stop Recording
+    </button>
+
+    <input type="text" id="audio_data" style="display:none">
+    """
+    components.html(html_code, height=200)
+
+
+def save_recorded_audio():
+    audio_base64 = st.session_state.get("audio_base64", None)
+    if not audio_base64:
+        return None
+    audio_bytes = base64.b64decode(audio_base64)
+    with open(AUDIO_FILE, "wb") as f:
+        f.write(audio_bytes)
+    return AUDIO_FILE
+
+
+# listens for JS → Python audio signal
+st.text_input("", key="audio_base64", label_visibility="collapsed")
+
+# ----------------------------
+# UI
 # ----------------------------
 st.title("🎓 KPRIET Multilingual Campus Voice Assistant")
-st.markdown("#### 🗣️ Ask for directions or choose a location below")
+st.markdown("#### 🗣️ Choose a location or use voice input")
 
-# Manual Button Selection with unique keys
+# Buttons for locations
 cols = st.columns(2)
 for i, loc in enumerate(location_map.keys()):
-    if cols[i % 2].button(loc.capitalize(), key=f"btn_{i}_{loc}"):
+    if cols[i % 2].button(loc.capitalize()):
         resp = location_map[loc]["response"]
         ta = translate_text(resp, "ta")
         hi = translate_text(resp, "hi")
-        st.success(f"**English:** {resp}")
-        st.info(f"**தமிழ்:** {ta}")
-        st.warning(f"**हिन्दी:** {hi}")
-        b64_en = tts_to_b64(resp, "en")
-        b64_ta = tts_to_b64(ta, "ta")
-        b64_hi = tts_to_b64(hi, "hi")
-        play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+
+        st.success(f"English: {resp}")
+        st.info(f"தமிழ்: {ta}")
+        st.warning(f"हिन्दी: {hi}")
+
+        play_three_in_browser(
+            tts_to_b64(resp, "en") or "",
+            tts_to_b64(ta, "ta") or "",
+            tts_to_b64(hi, "hi") or ""
+        )
 
 st.divider()
 
 # ----------------------------
-# Live voice recording area (streamlit-webrtc)
+# Voice Recorder
 # ----------------------------
-st.subheader("🎤 Live Voice Recording (Browser)")
+st.subheader("🎤 Live Voice Recording")
 
-webrtc_ctx = webrtc_streamer(
-    key="voice-recorder",
-    mode=WebRtcMode.SENDRECV,
-    client_settings=ClientSettings(
-        media_stream_constraints={"audio": True, "video": False}
-    ),
-    video_processor_factory=None,
-)
+audio_recorder_ui()
 
-st.caption("Press 'Start' on the player that appears (browser will ask mic permission). Then speak and press the Stop Recording button below.")
+if st.button("Process Recorded Voice"):
+    file_path = save_recorded_audio()
 
-if st.button("🛑 Stop Recording and Process"):
-    # collect frames from audio receiver
-    if webrtc_ctx and webrtc_ctx.audio_receiver:
-        all_frames = []
-        # collect frames until no more are available (small timeout)
-        while True:
-            frames = webrtc_ctx.audio_receiver.get_frames(timeout=0.5)
-            if not frames:
-                break
-            all_frames.extend(frames)
-
-        if len(all_frames) == 0:
-            st.error("No audio frames received from the browser. Make sure you started the recorder and allowed microphone access.")
-        else:
-            # convert frames to numpy arrays and concatenate
-            arrays = []
-            sample_rate = getattr(all_frames[0], "sample_rate", 16000)
-            for f in all_frames:
-                try:
-                    arr = f.to_ndarray()
-                except Exception:
-                    # fallback: try converting channels-first to channels-last
-                    try:
-                        arr = np.array(f.to_bytes())
-                    except:
-                        continue
-                # arr shape may be (channels, samples) or (samples,) - make mono
-                if arr.ndim == 2:
-                    # take mean across channels to mono
-                    arr_mono = np.mean(arr, axis=0)
-                else:
-                    arr_mono = arr
-                # if float, convert to int16 scale
-                if np.issubdtype(arr_mono.dtype, np.floating):
-                    # assume float32 in -1..1
-                    arr_int16 = (arr_mono * 32767).astype(np.int16)
-                else:
-                    arr_int16 = arr_mono.astype(np.int16)
-                arrays.append(arr_int16)
-
-            if len(arrays) == 0:
-                st.error("Could not convert audio frames.")
-            else:
-                audio_data = np.concatenate(arrays)
-                # save to a timestamped file and also to AUDIO_FILE for compatibility
-                timestamp = int(time.time())
-                saved_name = os.path.join(RECORDINGS_DIR, f"rec_{timestamp}.wav")
-                try:
-                    write(saved_name, sample_rate, audio_data)
-                    write(AUDIO_FILE, sample_rate, audio_data)
-                    st.success(f"Saved recording as {saved_name} and {AUDIO_FILE}")
-                except Exception as e:
-                    st.error(f"Failed to save WAV: {e}")
-                    saved_name = None
-
-                # Transcribe using faster-whisper
-                model = load_whisper()
-                user_text = ""
-                try:
-                    segments, info = model.transcribe(AUDIO_FILE)
-                    user_text = "".join([seg.text for seg in segments]).lower().strip()
-                except Exception as e:
-                    st.error(f"Transcription failed: {e}")
-                    user_text = ""
-
-                time.sleep(0.2)
-
-                if user_text:
-                    st.write(f"📝 You said: `{user_text}`")
-                    resp = find_location_response(user_text)
-                    ta = translate_text(resp, "ta")
-                    hi = translate_text(resp, "hi")
-                    st.success(f"**English:** {resp}")
-                    st.info(f"**தமிழ்:** {ta}")
-                    st.warning(f"**हिन्दी:** {hi}")
-
-                    b64_en = tts_to_b64(resp, "en")
-                    b64_ta = tts_to_b64(ta, "ta")
-                    b64_hi = tts_to_b64(hi, "hi")
-                    play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
-                else:
-                    st.warning("No valid voice input detected. Please try again.")
+    if not file_path:
+        st.error("No audio recorded. Press Start → Speak → Stop.")
     else:
-        st.error("WebRTC audio receiver not available. Make sure the recorder is running and microphone permission has been granted.")
+        st.success("Audio saved!")
 
-st.markdown("---")
-
-# ----------------------------
-# Also keep file-uploader fallback for users who prefer upload
-# ----------------------------
-st.subheader("Upload Audio (fallback)")
-uploaded_audio = st.file_uploader("Upload or record audio file (wav/mp3)", type=["wav", "mp3"])
-
-if st.button("Process Uploaded Audio", key="process_upload"):
-    if uploaded_audio is None:
-        st.error("Please upload an audio file first.")
-    else:
-        with open(AUDIO_FILE, "wb") as f:
-            f.write(uploaded_audio.getbuffer())
-        # save a timestamped copy
-        timestamp = int(time.time())
-        saved_name = os.path.join(RECORDINGS_DIR, f"upload_{timestamp}.wav")
-        try:
-            # try convert bytes to wav file (if already wav saved above, copy)
-            write(saved_name, FS, np.frombuffer(uploaded_audio.getbuffer(), dtype=np.int16))
-        except Exception:
-            # if write fails (mp3 etc.), just copy raw bytes
-            with open(saved_name, "wb") as sf:
-                sf.write(uploaded_audio.getbuffer())
-        st.success(f"Saved uploaded file as {saved_name}")
-
+        # Whisper transcription
         model = load_whisper()
-        user_text = ""
-        try:
-            segments, info = model.transcribe(AUDIO_FILE)
-            user_text = "".join([seg.text for seg in segments]).lower().strip()
-        except Exception as e:
-            st.error(f"Transcription failed: {e}")
-            user_text = ""
-
-        time.sleep(0.2)
+        segments, info = model.transcribe(file_path)
+        user_text = "".join([seg.text for seg in segments]).lower().strip()
 
         if user_text:
             st.write(f"📝 You said: `{user_text}`")
+
             resp = find_location_response(user_text)
             ta = translate_text(resp, "ta")
             hi = translate_text(resp, "hi")
-            st.success(f"**English:** {resp}")
-            st.info(f"**தமிழ்:** {ta}")
-            st.warning(f"**हिन्दी:** {hi}")
 
-            b64_en = tts_to_b64(resp, "en")
-            b64_ta = tts_to_b64(ta, "ta")
-            b64_hi = tts_to_b64(hi, "hi")
-            play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+            st.success(f"English: {resp}")
+            st.info(f"தமிழ்: {ta}")
+            st.warning(f"हिन्दी: {hi}")
+
+            play_three_in_browser(
+                tts_to_b64(resp, "en") or "",
+                tts_to_b64(ta, "ta") or "",
+                tts_to_b64(hi, "hi") or ""
+            )
         else:
-            st.warning("No valid voice input detected. Please try again.")
+            st.warning("Could not understand the audio. Try again.")
 
 st.caption("Developed by Haresh | CSE (AI & ML) | KPRIET 🎓")
