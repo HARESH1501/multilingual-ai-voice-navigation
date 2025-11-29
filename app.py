@@ -19,7 +19,7 @@ AUDIO_FILE = "input.wav"
 st.set_page_config(page_title="KPRIET Campus Voice Assistant", page_icon="🎓", layout="centered")
 
 # ----------------------------
-# Location Map
+# Location Map (unchanged)
 # ----------------------------
 location_map = {
     "admin": {
@@ -86,7 +86,62 @@ location_map = {
         "synonyms": ["cse block", "cse"],
         "response": "Enter through the Security Gate and walk straight. You’ll see the Imperial Hall on your right. Walk past the Imperial Hall — you’ll find a pathway beside it. Take that pathway — it will lead you to the Main Block. Walk straight past the Main Block. Continue straight until you see the pond. Cross the pond area and keep walking. Pass the Open-Air Theatre, then take a left turn. The CSE Block will be on your right side."
     },
-    # ... (same as your existing map – unchanged)
+    "open-air theatre": {
+        "synonyms": ["open air theatre", "oat"],
+        "response": "Enter through the Security Gate and walk straight. You will see the Imperial Hall on your right. Walk beside the Imperial Hall and take the pathway to reach the Main Block. Continue straight, walk past the pond. The Open-Air Theatre will be on your right, just before the CSE Block turn."
+    },
+    "boys toilet": {
+        "synonyms": ["boys toilet", "gents restroom", "gents toilet"],
+        "response": "Enter through the Security Gate and take the first left. Then take a right turn and walk straight. You’ll pass Kalai Arangam on your left. Just after that, you’ll reach the Chemical Engineering Block on your left. The Gents Toilet is located inside the Chemical Block, on the ground floor."
+    },
+    "girls toilet": {
+        "synonyms": ["girls toilet", "ladies toilet", "girls restroom"],
+        "response": "Enter through the Security Gate and take the first left. Then take a right turn and walk straight. You’ll pass Kalai Arangam on your left. Just after that, you’ll reach the Chemical Engineering Block on your left. The Ladies Toilet is located inside the Chemical Block, on the ground floor, just after the Boys Restroom"
+    },
+    "boys hostel": {
+        "synonyms": ["boys hostel"],
+        "response": "Enter through the Security Gate and walk straight. Take the first left, then turn right and continue walking. Go past Kalai Arangam — you’ll see the Boys Hostel on your left"
+    },
+    "girls hostel": {
+        "synonyms": ["girls hostel"],
+        "response": "Enter through the Security Gate and walk straight. Take a right near the roundana (circle) and walk straight on that road. Then take another right and continue walking. Take a left and walk a few steps — you’ll see the Girls Hostel on your left side."
+    },
+    "library": {
+        "synonyms": ["library", "central library"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road. take the small right road near the Girls washroom. Keep walk on the road, you'll see library on your right."
+    },
+    "ragam hall": {
+        "synonyms": ["ragam hall"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road. take the small right road near the Girls washroom. Keep walk on the road,take right .you'll see ragam hall near library."
+    },
+    "veena hall": {
+        "synonyms": ["veena hall"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road. take the small right road near the Girls washroom. Keep walk on the road, take left. walk few steps, you'll see veena hall on your left."
+    },
+    "pallavi hall": {
+        "synonyms": ["pallavi hall"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road. take the small right road near the Girls washroom. Keep walk on the road, take left. walk few steps, you'll see pallavi hall on your left."
+    },
+    "dhanam hall": {
+        "synonyms": ["dhanam hall"],
+        "response": "Walk in through the Security Gate. Take the second left — you’ll see the Admin Block on your right. Keep walking straight, pass the Main Block. Then take a right turn. You’ll reach the Mechanical Block at the end of the road. Go to the second floor — Thanam Hall will be on your right."
+    },
+    "ad block": {
+        "synonyms": ["ad block"],
+        "response": "Enter through the Security Gate and walk straight. Take the second left — you’ll see the Administrative Block on your right. Enter the Admin Block and go to the second floor. The AD Classrooms are located on the second floor of the Admin Block."
+    },
+    "sa office": {
+        "synonyms": ["sa office"],
+        "response": "Enter through the Security Gate and walk straight. Take the second left — you’ll see the Administrative Block on your right. Enter the Admin Block and go to the first floor. The SA Office is located on the first floor of the Admin Block."
+    },
+    "stone bench": {
+        "synonyms": ["stone bench"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road and take the small right near the Boys Washroom. Continue on that road — you’ll see the stone bench area on your left side."
+    },
+    "rk": {
+        "synonyms": ["rk"],
+        "response": "Enter through the Security Gate and walk straight. Keep walking on the main road and take a left turn opposite the Boys Washroom. You’ll see RK on your right side."
+    }
 }
 
 # flatten synonyms
@@ -117,23 +172,24 @@ def find_location_response(transcribed_text):
     return "Sorry, I don't have information about that location yet."
 
 # ----------------------------
-# Whisper
+# Whisper load
 # ----------------------------
 @st.cache_resource
 def load_whisper():
     return WhisperModel("base", device="cpu")
 
 # ----------------------------
-# Translation
+# Translation helper
 # ----------------------------
 def translate_text(text, lang_code):
     try:
-        return GoogleTranslator(source="auto", target=lang_code).translate(text)
+        translator = GoogleTranslator(source="auto", target=lang_code)
+        return translator.translate(text)
     except:
         return "Translation unavailable."
 
 # ----------------------------
-# TTS
+# TTS helper
 # ----------------------------
 def tts_to_b64(text, lang):
     try:
@@ -147,113 +203,167 @@ def tts_to_b64(text, lang):
         return None
 
 # ----------------------------
-# Play TTS sequentially
+# Play three TTS audios sequentially
 # ----------------------------
 def play_three_in_browser(b64_en, b64_ta, b64_hi):
     html = f"""
-    <audio id="a1" src="data:audio/mp3;base64,{b64_en}"></audio>
-    <audio id="a2" src="data:audio/mp3;base64,{b64_ta}"></audio>
-    <audio id="a3" src="data:audio/mp3;base64,{b64_hi}"></audio>
+    <div id="players" style="display:none">
+      <audio id="a1" src="data:audio/mp3;base64,{b64_en}"></audio>
+      <audio id="a2" src="data:audio/mp3;base64,{b64_ta}"></audio>
+      <audio id="a3" src="data:audio/mp3;base64,{b64_hi}"></audio>
+    </div>
     <script>
-      a1.onended = ()=>a2.play();
-      a2.onended = ()=>a3.play();
-      a1.play();
+      const a1 = document.getElementById("a1");
+      const a2 = document.getElementById("a2");
+      const a3 = document.getElementById("a3");
+      function playIfReady(a) {{
+        if (!a) return Promise.resolve();
+        return new Promise((res) => {{
+          a.onended = () => res();
+          a.onerror = () => res();
+          a.play().catch(()=>{{}});
+        }});
+      }}
+      (async () => {{
+        await playIfReady(a1);
+        await playIfReady(a2);
+        await playIfReady(a3);
+      }})();
     </script>
     """
-    components.html(html, height=0)
+    components.html(html, height=10)
 
 # ----------------------------
-# UPDATED: HTML + JS Audio Recorder (auto-stop after 5 seconds)
+# AUDIO: One-button recorder (5s) + auto-process
 # ----------------------------
-def audio_recorder_ui():
+def audio_recorder_ui_one_button():
+    # This component shows one big button and a status text inside the component
+    # It records for 5 seconds automatically and writes base64 to the hidden input with id "audio_data"
     html_code = """
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+      <div id="rec_status" style="font-weight:600;"></div>
+      <button id="speakBtn" style="font-size:18px;padding:14px 26px;border-radius:12px;border:none;background:#1f77b4;color:white;cursor:pointer;">
+        🎤 Tap to Speak
+      </button>
+      <input type="hidden" id="audio_data">
+    </div>
+
     <script>
-        let mediaRecorder;
-        let audioChunks = [];
-        let autoStopTimer = null;
+      const btn = document.getElementById("speakBtn");
+      const status = document.getElementById("rec_status");
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let autoStopTimer = null;
 
-        async function startRecording() {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
+      async function startAndAutoProcess() {
+        // reset
+        audioChunks = [];
+        status.innerText = "";
 
-            audioChunks = [];
-            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
 
-            mediaRecorder.onstop = async () => {
-                clearTimeout(autoStopTimer);
+          mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
-                const blob = new Blob(audioChunks, { type: 'audio/wav' });
-                const arrayBuffer = await blob.arrayBuffer();
+          mediaRecorder.onstart = () => {
+            status.innerText = "🎙️ Listening… Speak now";
+          };
 
-                let binary = '';
-                const bytes = new Uint8Array(arrayBuffer);
-                bytes.forEach(b => binary += String.fromCharCode(b));
-                const base64Audio = btoa(binary);
+          mediaRecorder.onstop = async () => {
+            status.innerText = "Processing…";
 
-                const out = document.getElementById("audio_data");
-                out.value = base64Audio;
-                out.dispatchEvent(new Event("change"));
-            };
+            const blob = new Blob(audioChunks, { type: 'audio/wav' });
+            const arrayBuffer = await blob.arrayBuffer();
+            let binary = '';
+            const bytes = new Uint8Array(arrayBuffer);
+            bytes.forEach(b => binary += String.fromCharCode(b));
+            const base64Audio = btoa(binary);
 
-            mediaRecorder.start();
+            // write to hidden input which Streamlit text_input is listening to
+            const out = document.getElementById("audio_data");
+            out.value = base64Audio;
 
-            // AUTO STOP AFTER 5 SECONDS
-            autoStopTimer = setTimeout(() => {
-                if (mediaRecorder && mediaRecorder.state === "recording") {
-                    mediaRecorder.stop();
-                }
-            }, 5000);
-        }
+            // dispatch change event so Streamlit picks it up
+            out.dispatchEvent(new Event("change"));
 
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state === "recording") {
-                mediaRecorder.stop();
+            // try to also set any visible Streamlit input (best-effort)
+            try {
+              const stInput = window.parent.document.querySelector('input[type="text"][data-base-key]');
+              if (stInput) {
+                stInput.value = base64Audio;
+                stInput.dispatchEvent(new Event("input", { bubbles: true }));
+                stInput.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            } catch(e) {
+              // ignore cross-origin issues
             }
+
+            // update status
+            setTimeout(()=>{ status.innerText = "Processed."; }, 400);
+          };
+
+          mediaRecorder.start();
+
+          // auto-stop after 5 seconds
+          autoStopTimer = setTimeout(() => {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+              mediaRecorder.stop();
+            }
+          }, 5000);
+
+        } catch (err) {
+          console.error(err);
+          status.innerText = "Microphone access denied or not available.";
         }
+      }
+
+      btn.onclick = () => {
+        startAndAutoProcess();
+      };
     </script>
-
-    <button onclick="startRecording()" style="padding:10px 20px; background:red; color:white; border:none; border-radius:5px;">
-        ⏺ Start Recording
-    </button>
-
-    <button onclick="stopRecording()" style="padding:10px 20px; background:gray; color:white; border:none; border-radius:5px; margin-left:10px;">
-        ⏹ Stop Recording
-    </button>
-
-    <input type="text" id="audio_data" style="display:none">
     """
-    components.html(html_code, height=200)
+    components.html(html_code, height=160)
 
-# Save audio
-def save_recorded_audio():
-    audio_base64 = st.session_state.get("audio_base64", None)
-    if not audio_base64:
+# Save recorded audio from session_state (on-change will trigger)
+def save_recorded_audio_from_state():
+    audio_b64 = st.session_state.get("audio_base64", None)
+    if not audio_b64:
+        return None
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+    except Exception:
         return None
     with open(AUDIO_FILE, "wb") as f:
-        f.write(base64.b64decode(audio_base64))
+        f.write(audio_bytes)
     return AUDIO_FILE
 
-# Listener
-st.text_input("", key="audio_base64", label_visibility="collapsed")
+# This function will be triggered when the hidden Streamlit text_input changes
+def _on_audio_received():
+    # When audio arrives, save it immediately and set a flag so main UI will process it below
+    file_path = save_recorded_audio_from_state()
+    st.session_state["_last_audio_file"] = file_path
+    st.session_state["_audio_arrived"] = True
+
+# Hidden text_input that receives base64 from the JS component; on_change triggers processing flow
+st.text_input("", key="audio_base64", on_change=_on_audio_received, label_visibility="collapsed")
 
 # ----------------------------
-# UI
+# UI (main)
 # ----------------------------
 st.title("🎓 KPRIET Multilingual Campus Voice Assistant")
 st.markdown("#### 🗣️ Choose a location or use voice input")
 
-# Location buttons
+# Buttons for manual selection (unchanged)
 cols = st.columns(2)
 for i, loc in enumerate(location_map.keys()):
     if cols[i % 2].button(loc.capitalize()):
         resp = location_map[loc]["response"]
         ta = translate_text(resp, "ta")
         hi = translate_text(resp, "hi")
-
         st.success(f"English: {resp}")
         st.info(f"தமிழ்: {ta}")
         st.warning(f"हिन्दी: {hi}")
-
         play_three_in_browser(
             tts_to_b64(resp, "en") or "",
             tts_to_b64(ta, "ta") or "",
@@ -263,41 +373,46 @@ for i, loc in enumerate(location_map.keys()):
 st.divider()
 
 # ----------------------------
-# Voice Recorder
+# Voice recorder (one button)
 # ----------------------------
-st.subheader("🎤 Live Voice Recording")
+st.subheader("🎤 Live Voice (Tap to Speak — records 5s)")
+audio_recorder_ui_one_button()
 
-audio_recorder_ui()
-
-if st.button("Process Recorded Voice"):
-    file_path = save_recorded_audio()
-
+# If audio arrived (set by _on_audio_received), process it immediately
+if st.session_state.get("_audio_arrived", False):
+    st.session_state["_audio_arrived"] = False  # reset flag so we don't process repeatedly
+    file_path = st.session_state.get("_last_audio_file", None)
     if not file_path:
-        st.error("No audio recorded. Press Start → Speak → Wait 5 sec.")
+        st.error("Failed to save recorded audio.")
     else:
-        st.success("Audio recorded!")
+        st.success("Audio received — processing...")
 
-        # Whisper
+        # Transcribe using Whisper
         model = load_whisper()
-        segments, info = model.transcribe(file_path)
-        user_text = "".join([seg.text for seg in segments]).lower().strip()
+        user_text = ""
+        try:
+            segments, info = model.transcribe(file_path)
+            user_text = "".join([seg.text for seg in segments]).lower().strip()
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            user_text = ""
+
+        time.sleep(0.2)
 
         if user_text:
             st.write(f"📝 You said: `{user_text}`")
-
             resp = find_location_response(user_text)
             ta = translate_text(resp, "ta")
             hi = translate_text(resp, "hi")
-
             st.success(f"English: {resp}")
             st.info(f"தமிழ்: {ta}")
             st.warning(f"हिन्दी: {hi}")
 
-            play_three_in_browser(
-                tts_to_b64(resp, "en") or "",
-                tts_to_b64(ta, "ta") or "",
-                tts_to_b64(hi, "hi") or ""
-            )
+            # Generate and play TTS
+            b64_en = tts_to_b64(resp, "en")
+            b64_ta = tts_to_b64(ta, "ta")
+            b64_hi = tts_to_b64(hi, "hi")
+            play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
         else:
             st.warning("Could not understand the audio. Try again.")
 
