@@ -6,3 +6,4 @@ deep-translator
 langdetect
 scipy
 numpy
+streamlit-webrtc
