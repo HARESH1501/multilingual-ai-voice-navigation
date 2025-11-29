@@ -1,8 +1,6 @@
 # app.py
 import streamlit as st
 from faster_whisper import WhisperModel
-import sounddevice as sd
-from scipy.io.wavfile import write
 from deep_translator import GoogleTranslator
 from gtts import gTTS
 import tempfile, os, time
@@ -10,7 +8,7 @@ from difflib import get_close_matches
 import numpy as np
 import base64
 import streamlit.components.v1 as components
-
+from scipy.io.wavfile import write 
 # ----------------------------
 # Configuration
 # ----------------------------
@@ -176,13 +174,17 @@ def find_location_response(transcribed_text):
 # ----------------------------
 # Recording
 # ----------------------------
-def record_audio(filename=AUDIO_FILE, duration=DURATION, fs=FS):
-    st.info("🎙️ Recording... Please speak now.")
-    recording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
-    sd.wait()
-    write(filename, fs, recording)
-    st.success("✅ Recording complete.")
-    time.sleep(0.2)
+def record_audio():
+    uploaded_file = st.file_uploader("🎤 Upload or record your voice", type=["wav", "mp3"])
+
+    if uploaded_file is not None:
+        with open(AUDIO_FILE, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.success("✅ Audio uploaded successfully!")
+        return True
+    else:
+        st.warning("Please upload a voice recording.")
+        return False
 
 # ----------------------------
 # Whisper model load (fixed)
