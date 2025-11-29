@@ -234,101 +234,136 @@ def play_three_in_browser(b64_en, b64_ta, b64_hi):
     components.html(html, height=10)
 
 # ----------------------------
-# AUDIO: One-button recorder (5s) + auto-process
+# Robust one-button recorder (tries many delivery methods)
 # ----------------------------
-def audio_recorder_ui_one_button():
-    # This component shows one big button and a status text inside the component
-    # It records for 5 seconds automatically and writes base64 to the hidden input with id "audio_data"
+def audio_recorder_ui_one_button_robust():
     html_code = """
-    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
       <div id="rec_status" style="font-weight:600;"></div>
-      <button id="speakBtn" style="font-size:18px;padding:14px 26px;border-radius:12px;border:none;background:#1f77b4;color:white;cursor:pointer;">
+      <button id="speakBtn" style="font-size:18px;padding:14px 28px;border-radius:12px;border:none;background:#1f77b4;color:white;cursor:pointer;">
         🎤 Tap to Speak
       </button>
-      <input type="hidden" id="audio_data">
+      <input type="hidden" id="audio_data_hidden">
+      <div style="font-size:12px;color:#666;">(records 5s automatically)</div>
     </div>
 
     <script>
-      const btn = document.getElementById("speakBtn");
-      const status = document.getElementById("rec_status");
-      let mediaRecorder = null;
-      let audioChunks = [];
-      let autoStopTimer = null;
+    const btn = document.getElementById("speakBtn");
+    const status = document.getElementById("rec_status");
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let autoStopTimer = null;
 
-      async function startAndAutoProcess() {
-        // reset
-        audioChunks = [];
-        status.innerText = "";
-
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorder = new MediaRecorder(stream);
-
-          mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
-          mediaRecorder.onstart = () => {
-            status.innerText = "🎙️ Listening… Speak now";
-          };
-
-          mediaRecorder.onstop = async () => {
-            status.innerText = "Processing…";
-
-            const blob = new Blob(audioChunks, { type: 'audio/wav' });
-            const arrayBuffer = await blob.arrayBuffer();
-            let binary = '';
-            const bytes = new Uint8Array(arrayBuffer);
-            bytes.forEach(b => binary += String.fromCharCode(b));
-            const base64Audio = btoa(binary);
-
-            // write to hidden input which Streamlit text_input is listening to
-            const out = document.getElementById("audio_data");
-            out.value = base64Audio;
-
-            // dispatch change event so Streamlit picks it up
-            out.dispatchEvent(new Event("change"));
-
-            // try to also set any visible Streamlit input (best-effort)
-            try {
-              const stInput = window.parent.document.querySelector('input[type="text"][data-base-key]');
-              if (stInput) {
-                stInput.value = base64Audio;
-                stInput.dispatchEvent(new Event("input", { bubbles: true }));
-                stInput.dispatchEvent(new Event("change", { bubbles: true }));
-              }
-            } catch(e) {
-              // ignore cross-origin issues
-            }
-
-            // update status
-            setTimeout(()=>{ status.innerText = "Processed."; }, 400);
-          };
-
-          mediaRecorder.start();
-
-          // auto-stop after 5 seconds
-          autoStopTimer = setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === "recording") {
-              mediaRecorder.stop();
-            }
-          }, 5000);
-
-        } catch (err) {
-          console.error(err);
-          status.innerText = "Microphone access denied or not available.";
+    function trySetStreamlitInput(base64Audio) {
+      // 1) Try to set known hidden input by id (if present)
+      try {
+        const hid = window.parent.document.getElementById("audio_data");
+        if (hid) {
+          hid.value = base64Audio;
+          hid.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
         }
-      }
+      } catch(e){}
 
-      btn.onclick = () => {
-        startAndAutoProcess();
-      };
+      // 2) Try to set inputs by name / data-base-key / aria-label - iterate
+      try {
+        const inputs = window.parent.document.querySelectorAll('input[type="text"], textarea');
+        for (let i=0; i<inputs.length; i++) {
+          const el = inputs[i];
+          // Heuristic: find an empty input or one with small length
+          if ((el.value === "" || el.value.length < 50) && !el.disabled) {
+            el.value = base64Audio;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          }
+        }
+      } catch(e){}
+
+      // 3) Try writing to localStorage as a fallback
+      try {
+        localStorage.setItem("streamlit_audio_base64", base64Audio);
+      } catch(e){}
+
+      // 4) Try postMessage (parent can capture, though Streamlit cannot directly)
+      try {
+        window.parent.postMessage({type:"streamlit_audio_base64", data: base64Audio}, "*");
+      } catch(e){}
+
+      return false;
+    }
+
+    async function startAndAutoProcess() {
+      audioChunks = [];
+      status.innerText = "";
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+        mediaRecorder.onstart = () => {
+          status.innerText = "🎙️ Listening… Speak now";
+        };
+
+        mediaRecorder.onstop = async () => {
+          clearTimeout(autoStopTimer);
+          status.innerText = "Processing…";
+
+          const blob = new Blob(audioChunks, { type: 'audio/wav' });
+          const arrayBuffer = await blob.arrayBuffer();
+          let binary = '';
+          const bytes = new Uint8Array(arrayBuffer);
+          bytes.forEach(b => binary += String.fromCharCode(b));
+          const base64Audio = btoa(binary);
+
+          // Try to deliver to Streamlit via several methods
+          const ok = trySetStreamlitInput(base64Audio);
+
+          // Also set local hidden field in this iframe
+          const hidden = document.getElementById("audio_data_hidden");
+          if (hidden) hidden.value = base64Audio;
+
+          // Inform the user
+          if (ok) {
+            status.innerText = "Recorded & sent — processing in app...";
+          } else {
+            status.innerText = "Recorded — please press fallback 'Process Recorded Voice' if nothing happens.";
+          }
+
+          // last-resort: put into clipboard (helpful for debugging)
+          try {
+            await navigator.clipboard.writeText(base64Audio.slice(0,200) + "...(truncated)");
+          } catch(e) {}
+        };
+
+        mediaRecorder.start();
+
+        autoStopTimer = setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+          }
+        }, 5000);
+
+      } catch (err) {
+        console.error(err);
+        status.innerText = "Microphone access denied or not available.";
+      }
+    }
+
+    btn.onclick = () => {
+      startAndAutoProcess();
+    };
     </script>
     """
-    components.html(html_code, height=160)
+    components.html(html_code, height=180)
 
 # Save recorded audio from session_state (on-change will trigger)
 def save_recorded_audio_from_state():
     audio_b64 = st.session_state.get("audio_base64", None)
     if not audio_b64:
+        # try localStorage fallback: user can press 'Process Recorded Voice (fallback)' which will ask user to paste
         return None
     try:
         audio_bytes = base64.b64decode(audio_b64)
@@ -337,6 +372,32 @@ def save_recorded_audio_from_state():
     with open(AUDIO_FILE, "wb") as f:
         f.write(audio_bytes)
     return AUDIO_FILE
+
+# Button-triggered fallback processor (if auto-send fails)
+def process_fallback_from_clipboard_or_manual():
+    st.info("Fallback: If the recorder didn't auto-send, open the console and copy the base64 prefix that was copied to clipboard, paste it here (first ~200 chars) — or try clicking the big button again.")
+    manual = st.text_area("Paste base64 (or full) audio here (or leave blank and press 'Try to read from session')", height=80)
+    if st.button("Try to process pasted base64"):
+        if not manual:
+            st.error("Please paste base64 string or try recording again.")
+            return None
+        # The pasted string might be truncated; we cannot reconstruct full audio. So we instruct user to re-record if truncated.
+        # If they paste full base64, we will try to decode.
+        try:
+            # attempt to detect if user pasted full data uri or raw base64
+            data = manual.strip()
+            if data.startswith("data:audio"):
+                # data URI - remove prefix
+                data = data.split(",", 1)[1]
+            decoded = base64.b64decode(data)
+            with open(AUDIO_FILE, "wb") as f:
+                f.write(decoded)
+            st.success("Saved pasted audio as input.wav")
+            return AUDIO_FILE
+        except Exception as e:
+            st.error(f"Failed to decode pasted data: {e}")
+            return None
+    return None
 
 # This function will be triggered when the hidden Streamlit text_input changes
 def _on_audio_received():
@@ -373,17 +434,18 @@ for i, loc in enumerate(location_map.keys()):
 st.divider()
 
 # ----------------------------
-# Voice recorder (one button)
+# Voice recorder (one big button)
 # ----------------------------
 st.subheader("🎤 Live Voice (Tap to Speak — records 5s)")
-audio_recorder_ui_one_button()
+
+audio_recorder_ui_one_button_robust()
 
 # If audio arrived (set by _on_audio_received), process it immediately
 if st.session_state.get("_audio_arrived", False):
     st.session_state["_audio_arrived"] = False  # reset flag so we don't process repeatedly
     file_path = st.session_state.get("_last_audio_file", None)
     if not file_path:
-        st.error("Failed to save recorded audio.")
+        st.error("Failed to save recorded audio. Try recording again or use fallback below.")
     else:
         st.success("Audio received — processing...")
 
@@ -415,5 +477,61 @@ if st.session_state.get("_audio_arrived", False):
             play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
         else:
             st.warning("Could not understand the audio. Try again.")
+
+st.markdown("---")
+st.subheader("Fallback / Debug options")
+st.write("If the auto-send doesn't work in your browser (rare), use the fallback below:")
+if st.button("Process Recorded Voice (fallback)"):
+    # try to process whatever is currently in session state (if any)
+    fp = save_recorded_audio_from_state()
+    if fp:
+        st.success("Found audio in session — processing...")
+        model = load_whisper()
+        user_text = ""
+        try:
+            segments, info = model.transcribe(fp)
+            user_text = "".join([seg.text for seg in segments]).lower().strip()
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            user_text = ""
+        if user_text:
+            st.write(f"📝 You said: `{user_text}`")
+            resp = find_location_response(user_text)
+            ta = translate_text(resp, "ta")
+            hi = translate_text(resp, "hi")
+            st.success(f"English: {resp}")
+            st.info(f"தமிழ்: {ta}")
+            st.warning(f"हिन्दी: {hi}")
+            b64_en = tts_to_b64(resp, "en")
+            b64_ta = tts_to_b64(ta, "ta")
+            b64_hi = tts_to_b64(hi, "hi")
+            play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+        else:
+            st.warning("Could not understand the audio. Try again.")
+    else:
+        st.info("No audio present in session. You can try the manual fallback: paste base64 into the box below.")
+        maybe = process_fallback_from_clipboard_or_manual()
+        if maybe:
+            st.success("Processing pasted audio...")
+            model = load_whisper()
+            user_text = ""
+            try:
+                segments, info = model.transcribe(maybe)
+                user_text = "".join([seg.text for seg in segments]).lower().strip()
+            except Exception as e:
+                st.error(f"Transcription failed: {e}")
+                user_text = ""
+            if user_text:
+                st.write(f"📝 You said: `{user_text}`")
+                resp = find_location_response(user_text)
+                ta = translate_text(resp, "ta")
+                hi = translate_text(resp, "hi")
+                st.success(f"English: {resp}")
+                st.info(f"தமிழ்: {ta}")
+                st.warning(f"हिन्दी: {hi}")
+                b64_en = tts_to_b64(resp, "en")
+                b64_ta = tts_to_b64(ta, "ta")
+                b64_hi = tts_to_b64(hi, "hi")
+                play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
 
 st.caption("Developed by Haresh | CSE (AI & ML) | KPRIET 🎓")
