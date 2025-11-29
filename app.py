@@ -1,4 +1,15 @@
 # app.py
+# NOTE: Make sure your requirements.txt contains:
+# streamlit
+# faster-whisper
+# gtts
+# googletrans==4.0.0-rc1
+# deep-translator
+# langdetect
+# scipy
+# numpy
+# streamlit-webrtc
+
 import streamlit as st
 from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
@@ -8,13 +19,19 @@ from difflib import get_close_matches
 import numpy as np
 import base64
 import streamlit.components.v1 as components
-from scipy.io.wavfile import write 
+from scipy.io.wavfile import write
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
+
 # ----------------------------
 # Configuration
 # ----------------------------
 FS = 44100
-DURATION = 5  # seconds to record
+DURATION = 5  # seconds to record (kept for reference)
 AUDIO_FILE = "input.wav"
+RECORDINGS_DIR = "recordings"
+
+# ensure recordings dir exists
+os.makedirs(RECORDINGS_DIR, exist_ok=True)
 
 st.set_page_config(page_title="KPRIET Campus Voice Assistant", page_icon="🎓", layout="centered")
 
@@ -172,21 +189,6 @@ def find_location_response(transcribed_text):
     return "Sorry, I don't have information about that location yet."
 
 # ----------------------------
-# Recording
-# ----------------------------
-def record_audio():
-    uploaded_file = st.file_uploader("🎤 Upload or record your voice", type=["wav", "mp3"])
-
-    if uploaded_file is not None:
-        with open(AUDIO_FILE, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success("✅ Audio uploaded successfully!")
-        return True
-    else:
-        st.warning("Please upload a voice recording.")
-        return False
-
-# ----------------------------
 # Whisper model load (fixed)
 # ----------------------------
 @st.cache_resource
@@ -276,36 +278,158 @@ for i, loc in enumerate(location_map.keys()):
 
 st.divider()
 
-# Voice Input Section
-if st.button("🎤 Voice Query", key="voice_query"):
-    record_audio()
-    model = load_whisper()
+# ----------------------------
+# Live voice recording area (streamlit-webrtc)
+# ----------------------------
+st.subheader("🎤 Live Voice Recording (Browser)")
 
-    user_text = ""
-    try:
-        segments, info = model.transcribe(AUDIO_FILE)
-        user_text = "".join([seg.text for seg in segments]).lower().strip()
-    except Exception as e:
-        st.error(f"Transcription failed: {e}")
-        user_text = ""
+webrtc_ctx = webrtc_streamer(
+    key="voice-recorder",
+    mode=WebRtcMode.SENDRECV,
+    client_settings=ClientSettings(
+        media_stream_constraints={"audio": True, "video": False}
+    ),
+    video_processor_factory=None,
+)
 
-    time.sleep(0.2)
+st.caption("Press 'Start' on the player that appears (browser will ask mic permission). Then speak and press the Stop Recording button below.")
 
-    if user_text:
-        st.write(f"📝 You said: `{user_text}`")
-        resp = find_location_response(user_text)
-        ta = translate_text(resp, "ta")
-        hi = translate_text(resp, "hi")
-        st.success(f"**English:** {resp}")
-        st.info(f"**தமிழ்:** {ta}")
-        st.warning(f"**हिन्दी:** {hi}")
+if st.button("🛑 Stop Recording and Process"):
+    # collect frames from audio receiver
+    if webrtc_ctx and webrtc_ctx.audio_receiver:
+        all_frames = []
+        # collect frames until no more are available (small timeout)
+        while True:
+            frames = webrtc_ctx.audio_receiver.get_frames(timeout=0.5)
+            if not frames:
+                break
+            all_frames.extend(frames)
 
-        b64_en = tts_to_b64(resp, "en")
-        b64_ta = tts_to_b64(ta, "ta")
-        b64_hi = tts_to_b64(hi, "hi")
-        play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+        if len(all_frames) == 0:
+            st.error("No audio frames received from the browser. Make sure you started the recorder and allowed microphone access.")
+        else:
+            # convert frames to numpy arrays and concatenate
+            arrays = []
+            sample_rate = getattr(all_frames[0], "sample_rate", 16000)
+            for f in all_frames:
+                try:
+                    arr = f.to_ndarray()
+                except Exception:
+                    # fallback: try converting channels-first to channels-last
+                    try:
+                        arr = np.array(f.to_bytes())
+                    except:
+                        continue
+                # arr shape may be (channels, samples) or (samples,) - make mono
+                if arr.ndim == 2:
+                    # take mean across channels to mono
+                    arr_mono = np.mean(arr, axis=0)
+                else:
+                    arr_mono = arr
+                # if float, convert to int16 scale
+                if np.issubdtype(arr_mono.dtype, np.floating):
+                    # assume float32 in -1..1
+                    arr_int16 = (arr_mono * 32767).astype(np.int16)
+                else:
+                    arr_int16 = arr_mono.astype(np.int16)
+                arrays.append(arr_int16)
 
+            if len(arrays) == 0:
+                st.error("Could not convert audio frames.")
+            else:
+                audio_data = np.concatenate(arrays)
+                # save to a timestamped file and also to AUDIO_FILE for compatibility
+                timestamp = int(time.time())
+                saved_name = os.path.join(RECORDINGS_DIR, f"rec_{timestamp}.wav")
+                try:
+                    write(saved_name, sample_rate, audio_data)
+                    write(AUDIO_FILE, sample_rate, audio_data)
+                    st.success(f"Saved recording as {saved_name} and {AUDIO_FILE}")
+                except Exception as e:
+                    st.error(f"Failed to save WAV: {e}")
+                    saved_name = None
+
+                # Transcribe using faster-whisper
+                model = load_whisper()
+                user_text = ""
+                try:
+                    segments, info = model.transcribe(AUDIO_FILE)
+                    user_text = "".join([seg.text for seg in segments]).lower().strip()
+                except Exception as e:
+                    st.error(f"Transcription failed: {e}")
+                    user_text = ""
+
+                time.sleep(0.2)
+
+                if user_text:
+                    st.write(f"📝 You said: `{user_text}`")
+                    resp = find_location_response(user_text)
+                    ta = translate_text(resp, "ta")
+                    hi = translate_text(resp, "hi")
+                    st.success(f"**English:** {resp}")
+                    st.info(f"**தமிழ்:** {ta}")
+                    st.warning(f"**हिन्दी:** {hi}")
+
+                    b64_en = tts_to_b64(resp, "en")
+                    b64_ta = tts_to_b64(ta, "ta")
+                    b64_hi = tts_to_b64(hi, "hi")
+                    play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+                else:
+                    st.warning("No valid voice input detected. Please try again.")
     else:
-        st.warning("No valid voice input detected. Please try again.")
+        st.error("WebRTC audio receiver not available. Make sure the recorder is running and microphone permission has been granted.")
+
+st.markdown("---")
+
+# ----------------------------
+# Also keep file-uploader fallback for users who prefer upload
+# ----------------------------
+st.subheader("Upload Audio (fallback)")
+uploaded_audio = st.file_uploader("Upload or record audio file (wav/mp3)", type=["wav", "mp3"])
+
+if st.button("Process Uploaded Audio", key="process_upload"):
+    if uploaded_audio is None:
+        st.error("Please upload an audio file first.")
+    else:
+        with open(AUDIO_FILE, "wb") as f:
+            f.write(uploaded_audio.getbuffer())
+        # save a timestamped copy
+        timestamp = int(time.time())
+        saved_name = os.path.join(RECORDINGS_DIR, f"upload_{timestamp}.wav")
+        try:
+            # try convert bytes to wav file (if already wav saved above, copy)
+            write(saved_name, FS, np.frombuffer(uploaded_audio.getbuffer(), dtype=np.int16))
+        except Exception:
+            # if write fails (mp3 etc.), just copy raw bytes
+            with open(saved_name, "wb") as sf:
+                sf.write(uploaded_audio.getbuffer())
+        st.success(f"Saved uploaded file as {saved_name}")
+
+        model = load_whisper()
+        user_text = ""
+        try:
+            segments, info = model.transcribe(AUDIO_FILE)
+            user_text = "".join([seg.text for seg in segments]).lower().strip()
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            user_text = ""
+
+        time.sleep(0.2)
+
+        if user_text:
+            st.write(f"📝 You said: `{user_text}`")
+            resp = find_location_response(user_text)
+            ta = translate_text(resp, "ta")
+            hi = translate_text(resp, "hi")
+            st.success(f"**English:** {resp}")
+            st.info(f"**தமிழ்:** {ta}")
+            st.warning(f"**हिन्दी:** {hi}")
+
+            b64_en = tts_to_b64(resp, "en")
+            b64_ta = tts_to_b64(ta, "ta")
+            b64_hi = tts_to_b64(hi, "hi")
+            play_three_in_browser(b64_en or "", b64_ta or "", b64_hi or "")
+        else:
+            st.warning("No valid voice input detected. Please try again.")
 
 st.caption("Developed by Haresh | CSE (AI & ML) | KPRIET 🎓")
