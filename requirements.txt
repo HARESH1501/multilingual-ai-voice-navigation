@@ -1,9 +1,8 @@
 streamlit
 faster-whisper
 gtts
-googletrans==4.0.0-rc1
 deep-translator
-langdetect
+googletrans==4.0.0-rc1
 scipy
 numpy
-streamlit-webrtc
+python-multipart
