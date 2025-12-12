@@ -268,7 +268,12 @@ def _on_audio_received():
     st.session_state["_audio_arrived"] = True
 
 # hidden text_input that fallback JS may target
-st.text_input("", key="audio_base64", on_change=_on_audio_received, label_visibility="collapsed")
+st.text_input(
+    "hidden_audio_input",
+    key="audio_base64",
+    on_change=_on_audio_received,
+    label_visibility="collapsed"
+)
 
 # ----------------------------
 # UI
@@ -387,3 +392,4 @@ if st.button("Process Recorded Voice (fallback)"):
                 st.error(f"Failed to decode pasted data: {e}")
 
 st.caption("Developed by Haresh | CSE (AI & ML) | KPRIET 🎓")
+
